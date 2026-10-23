@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeWord · Alexa+ simulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#say-form">Skip to the voice input</a>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>SafeWord</h1>
+        <p>Alexa+ can now spend your money. SafeWord makes sure it's really you, and really safe.</p>
+      </div>
+    </div>
+    <div class="conn" role="status">
+      <span id="conn-dot" class="dot" aria-hidden="true"></span>
+      <span id="conn-text">Connecting…</span>
+    </div>
+  </header>
+
+  <section id="impact-strip" class="impact-strip" aria-label="What SafeWord has done so far"></section>
+
+  <main class="layout">
+    <!-- Left: the simulated Alexa+ device -->
+    <section class="device-col" aria-label="Simulated Alexa+ device">
+      <div class="device">
+        <div class="screen">
+          <div class="screen-head">
+            <span class="clock" id="clock-display">18:00</span>
+            <span class="household" id="household">Household</span>
+          </div>
+          <div id="chat" class="chat" aria-live="polite" aria-label="Conversation">
+            <div class="hint">Pick who is speaking, then say something. Try a scenario below.</div>
+          </div>
+          <div id="ring" class="ring" aria-hidden="true"></div>
+        </div>
+        <div class="controls">
+          <div class="row">
+            <label>Speaker (voice ID)
+              <select id="speaker">
+                <option value="alex|adult">Alex (adult, guardian)</option>
+                <option value="sam|adult">Sam (adult)</option>
+                <option value="mia|child">Mia (child, 9)</option>
+                <option value="grandpa|elder">Grandpa Joe (elder)</option>
+                <option value="|unknown">Unknown voice</option>
+              </select>
+            </label>
+            <label>Local time
+              <input id="time" type="time" value="18:00">
+            </label>
+            <label class="toggle">
+              <input id="home" type="checkbox" checked>
+              <span>Someone home</span>
+            </label>
+          </div>
+          <form id="say-form" class="say">
+            <button type="button" id="mic" class="mic" title="Speak (uses your browser's speech recognition)" aria-label="Speak to Alexa">🎙</button>
+            <input id="utterance" autocomplete="off" aria-label="What you say to Alexa" placeholder="“Alexa, reorder my usual groceries”">
+            <button type="submit">Say</button>
+          </form>
+          <label class="toggle voice-toggle"><input id="voice" type="checkbox" checked> <span>Alexa speaks replies · <span id="voice-src">voice: checking…</span></span></label>
+          <div class="scenarios" id="scenarios" role="group" aria-label="Demo scenarios"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Middle: decision + traffic -->
+    <section class="mid-col">
+      <div class="card" id="decision-card">
+        <div class="card-head"><h2>SafeWord decision</h2><span class="sub" id="decision-tool"></span></div>
+        <div id="decision" class="decision empty" aria-live="polite">No decision yet.</div>
+        <div id="app-view" class="app-view" hidden>
+          <div class="app-head">MCP App view · <code id="app-uri"></code> <span class="muted">rendered from the server's ui:// resource</span></div>
+          <div id="app-frame" class="app-frame"></div>
+        </div>
+      </div>
+      <div class="card traffic-card">
+        <div class="card-head">
+          <h2>MCP traffic</h2>
+          <span class="sub">Streamable HTTP · <code>POST /mcp</code> · protocol 2025-11-25</span>
+          <label class="mini"><input type="checkbox" id="show-ui"> show panel refreshes</label>
+        </div>
+        <ol id="traffic" class="traffic" aria-label="JSON-RPC messages, newest first"></ol>
+      </div>
+    </section>
+
+    <!-- Right: household panels -->
+    <section class="side-col" aria-label="Household">
+      <div class="tabs" role="tablist" aria-label="Household panels">
+        <button role="tab" id="tabbtn-phone" aria-controls="tab-phone" aria-selected="true" class="tab active" data-tab="phone">Guardian phone <span id="ntf-count" class="badge" hidden>0</span></button>
+        <button role="tab" id="tabbtn-addons" aria-controls="tab-addons" aria-selected="false" class="tab" data-tab="addons">Add-ons</button>
+        <button role="tab" id="tabbtn-rules" aria-controls="tab-rules" aria-selected="false" class="tab" data-tab="rules">House rules</button>
+        <button role="tab" id="tabbtn-audit" aria-controls="tab-audit" aria-selected="false" class="tab" data-tab="audit">Audit log</button>
+      </div>
+
+      <div class="panel" id="tab-phone" role="tabpanel" aria-labelledby="tabbtn-phone">
+        <div class="phone">
+          <div class="phone-head">Alex's phone (guardian)</div>
+          <div id="notifications" class="ntfs"><p class="muted">No alerts. SafeWord will alert Alex (the guardian) here.</p></div>
+          <h3>Waiting for approval</h3>
+          <div id="pending" class="pending"><p class="muted">Nothing pending.</p></div>
+        </div>
+      </div>
+
+      <div class="panel" id="tab-addons" role="tabpanel" aria-labelledby="tabbtn-addons" hidden>
+        <p class="muted small">Each add-on's tool manifest is pinned with SHA-256 when approved. Every call re-checks it, so a silent change or hidden instruction blocks the add-on.</p>
+        <div id="addons" class="addons"></div>
+      </div>
+
+      <div class="panel" id="tab-rules" role="tabpanel" aria-labelledby="tabbtn-rules" hidden>
+        <div id="policy" class="policy"></div>
+        <form id="policy-form" class="policy-form">
+          <h3>Try a rule change</h3>
+          <label>Auto-approve purchases up to $ <input id="limit" type="number" min="0" step="5" value="50"></label>
+          <label>Scam Shield cooling-off (min) <input id="cooling" type="number" min="0" step="5" value="60"></label>
+          <div class="btns">
+            <button type="button" id="dry-run" class="secondary">Dry run on past decisions</button>
+            <button type="submit">Apply (adult passcode)</button>
+          </div>
+          <div id="impact" class="impact" aria-live="polite"></div>
+        </form>
+      </div>
+
+      <div class="panel" id="tab-audit" role="tabpanel" aria-labelledby="tabbtn-audit" hidden>
+        <div class="audit-head">
+          <span id="chain" class="chain" role="status">Checking chain…</span>
+          <button id="tamper" class="danger small" title="Rewrite an old blocked decision as 'allow', like an attacker with disk access">Tamper with log</button>
+        </div>
+        <ol id="audit" class="audit" aria-label="Audit entries, newest first"></ol>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="elicit" class="elicit" aria-labelledby="elicit-title">
+    <form method="dialog" id="elicit-form">
+      <div class="elicit-tag">elicitation/create · from SafeWord</div>
+      <h2 id="elicit-title">Approval needed</h2>
+      <p id="elicit-msg"></p>
+      <div id="elicit-fields" class="elicit-fields"></div>
+      <p class="muted small" id="elicit-hint"></p>
+      <div class="btns">
+        <button value="decline" class="secondary" formnovalidate>Not now</button>
+        <button value="accept" id="elicit-ok">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

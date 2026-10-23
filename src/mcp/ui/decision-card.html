@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision Gate</title>
+<style>
+  /* MCP App view (ui://decision-gate/decision-card). Self-contained: no external
+     requests, so it needs no CSP allowances. Host theme variables are used when given. */
+  :root {
+    --bg: var(--color-background-primary, #ffffff);
+    --bg2: var(--color-background-secondary, #f3f5f9);
+    --text: var(--color-text-primary, #121826);
+    --muted: var(--color-text-secondary, #5b6578);
+    --line: var(--color-border-primary, #dfe3ec);
+    --allow: #1d8a52; --allow-bg: #e3f6ec;
+    --confirm: #8a6200; --confirm-bg: #fff3d6;
+    --hold: #5b3bb5; --hold-bg: #eee8ff;
+    --block: #b42323; --block-bg: #fde7e7;
+    --accent: #0a84b8;
+    color-scheme: light dark;
+  }
+  :root[data-theme="dark"] {
+    --bg: var(--color-background-primary, #121826);
+    --bg2: var(--color-background-secondary, #182033);
+    --text: var(--color-text-primary, #e7ecf5);
+    --muted: var(--color-text-secondary, #8a96ad);
+    --line: var(--color-border-primary, #243049);
+    --allow: #7ff0ae; --allow-bg: #12361f;
+    --confirm: #ffd27a; --confirm-bg: #3b2d0c;
+    --hold: #d4bfff; --hold-bg: #2b1f4a;
+    --block: #ff9d9d; --block-bg: #3d1515;
+    --accent: #19c4f0;
+  }
+  * { box-sizing: border-box; }
+  html { overflow: hidden; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif); }
+  .card { padding: 14px 16px; }
+  .top { display: flex; align-items: center; gap: 12px; }
+  .pill { text-transform: uppercase; letter-spacing: .06em; font-weight: 700; font-size: 12px; padding: 5px 11px; border-radius: 8px; }
+  .allow { color: var(--allow); background: var(--allow-bg); }
+  .confirm { color: var(--confirm); background: var(--confirm-bg); }
+  .hold { color: var(--hold); background: var(--hold-bg); }
+  .block { color: var(--block); background: var(--block-bg); }
+  .risk { flex: 1; display: flex; align-items: center; gap: 8px; }
+  .bar { flex: 1; height: 8px; border-radius: 99px; background: var(--bg2); overflow: hidden; }
+  .bar span { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #2fbf71, #f2b33d 50%, #ef5b5b); background-size: 280px 100%; transition: width .4s; }
+  .num { font: 12px ui-monospace, Consolas, monospace; color: var(--muted); }
+  .say { margin: 12px 0 0; font-size: 15px; }
+  ul { margin: 10px 0 0; padding-left: 18px; }
+  li { margin: 2px 0; }
+  .scam { margin-top: 10px; padding: 7px 10px; border-radius: 8px; color: var(--hold); background: var(--hold-bg); font-size: 12.5px; }
+  .meta { margin-top: 10px; color: var(--muted); font-size: 12px; }
+  form { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  form .lbl { width: 100%; font-size: 12.5px; color: var(--muted); }
+  select, input { font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  input { width: 110px; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 7px 14px; background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .result { width: 100%; font-size: 12.5px; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="card" id="root"><div class="empty">Waiting for the gate's decision…</div></div>
+<script>
+  // Talks to the host over postMessage JSON-RPC, per the MCP Apps spec (2026-01-26):
+  // ui/initialize -> ui/notifications/initialized, then the host sends tool-input/tool-result.
+  const pending = new Map();
+  let nextId = 1;
+  const send = (msg) => window.parent.postMessage({ jsonrpc: '2.0', ...msg }, '*');
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    send({ id, method, params });
+  });
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  let approvers = [];
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window.parent) return;
+    const m = e.data;
+    if (!m || m.jsonrpc !== '2.0') return;
+    if (m.id !== undefined && pending.has(m.id) && !m.method) {
+      const p = pending.get(m.id);
+      pending.delete(m.id);
+      m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result);
+      return;
+    }
+    if (m.method === 'ui/notifications/tool-result') render(m.params);
+    if (m.method === 'ui/notifications/host-context-changed') applyContext(m.params);
+    if (m.method === 'ui/resource-teardown' && m.id !== undefined) send({ id: m.id, result: {} });
+  });
+
+  function applyContext(ctx = {}) {
+    if (ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+    for (const [k, v] of Object.entries(ctx.styles?.variables ?? {})) if (v) document.documentElement.style.setProperty(k, v);
+  }
+
+  function decisionOf(result) {
+    if (result?.structuredContent) return result.structuredContent;
+    try { return JSON.parse(result?.content?.[0]?.text ?? 'null'); } catch { return null; }
+  }
+
+  let lastResult = null;
+  function render(result) {
+    lastResult = result;
+    const d = decisionOf(result);
+    const root = document.getElementById('root');
+    if (!d || !d.verdict) { root.innerHTML = '<div class="empty">No decision in this result.</div>'; return; }
+    const open = d.confirmation && !(d.approval && ['approved', 'locked'].includes(d.approval.status));
+    const exec = d.execution && (d.execution.order_id || d.execution.transfer_id || (d.execution.state && `${d.execution.door} ${d.execution.state}`));
+    root.innerHTML = `
+      <div class="top">
+        <span class="pill ${esc(d.verdict)}">${esc(d.verdict)}</span>
+        <div class="risk"><div class="bar"><span style="width:${Number(d.risk_score) || 0}%"></span></div><span class="num">risk ${Number(d.risk_score) || 0}</span></div>
+      </div>
+      <p class="say">${esc(d.say)}</p>
+      ${d.reasons?.length ? `<ul>${d.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+      ${d.scam_signals ? `<div class="scam">Scam Shield: ${d.scam_signals.map(esc).join(' · ')}</div>` : ''}
+      <div class="meta">${esc(d.decision_id)}${exec ? ` · done: ${esc(exec)}` : d.verdict === 'allow' ? '' : ' · not sent to the brand'}${d.explanation_source ? ` · explained by ${esc(d.explanation_source)}` : ''}</div>
+      ${open && d.confirmation.required_approver === 'safe_word' ? `
+      <form id="approve" data-kind="safe_word">
+        <div class="lbl">${esc(d.confirmation.question)}</div>
+        <input name="answer" placeholder="safe-word answer" autocomplete="off" aria-label="Safe-word answer" style="width:180px">
+        <button>Answer</button>
+        <div class="result" id="result"></div>
+      </form>` : open ? `
+      <form id="approve">
+        <div class="lbl">${d.confirmation.required_approver === 'caregiver' ? `Only the caregiver${d.notified ? ` (${esc(d.notified)})` : ''} can release this.` : 'An adult can approve this here.'}</div>
+        <select name="approver">${approvers.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('') || '<option value="">approver id</option>'}</select>
+        <input name="passcode" type="password" inputmode="numeric" placeholder="passcode" autocomplete="off">
+        <button>Approve</button>
+        <div class="result" id="result"></div>
+      </form>` : ''}`;
+    const form = document.getElementById('approve');
+    if (form) form.addEventListener('submit', (e) => approve(e, d.confirmation.id));
+  }
+
+  async function approve(e, confirmationId) {
+    e.preventDefault();
+    const f = e.target;
+    f.querySelector('button').disabled = true;
+    const out = document.getElementById('result');
+    try {
+      // Proxied by the host to the Decision Gate server (confirm_action is visible to apps).
+      const call = f.dataset.kind === 'safe_word'
+        ? { name: 'answer_challenge', arguments: { confirmation_id: confirmationId, answer: f.answer.value } }
+        : { name: 'confirm_action', arguments: { confirmation_id: confirmationId, approver: f.approver.value, passcode: f.passcode.value } };
+      const r = decisionOf(await request('tools/call', call));
+      out.textContent = r.ok ? `Approved. ${r.execution?.order_id ?? r.execution?.transfer_id ?? ''}` : r.message;
+      if (r.ok) f.querySelectorAll('select,input,button').forEach((x) => { x.disabled = true; });
+      else f.querySelector('button').disabled = false;
+    } catch (err) {
+      out.textContent = err.message;
+      f.querySelector('button').disabled = false;
+    }
+  }
+
+  async function loadApprovers() {
+    try {
+      const p = decisionOf(await request('tools/call', { name: 'get_policy', arguments: {} }));
+      approvers = Object.entries(p.members).filter(([, m]) => m.can_approve).map(([id, m]) => ({ id, name: m.name }));
+      if (lastResult && !document.getElementById('result')?.textContent) render(lastResult);
+    } catch { /* host may not proxy tool calls; the form still works with a typed id */ }
+  }
+
+  new ResizeObserver(() => {
+    send({ method: 'ui/notifications/size-changed', params: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight } });
+  }).observe(document.body);
+
+  (async () => {
+    const init = await request('ui/initialize', {
+      protocolVersion: '2026-01-26',
+      appInfo: { name: 'decision-gate-card', version: '1.0.0' },
+      appCapabilities: { availableDisplayModes: ['inline'] },
+    });
+    applyContext(init?.hostContext);
+    send({ method: 'ui/notifications/initialized', params: {} });
+    loadApprovers();
+  })();
+</script>
+</body>
+</html>

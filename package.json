@@ -1,0 +1,35 @@
+{
+  "name": "decision-gate-alexa",
+  "version": "1.0.0",
+  "description": "An MCP trust firewall for Alexa+: checks every purchase, transfer and door unlock before it happens.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --watch src/server.js",
+    "dev:bedrock": "node --env-file-if-exists=.env --watch src/server.js --bedrock",
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "bedrock:check": "node --env-file-if-exists=.env scripts/bedrock-check.js",
+    "test": "node --test test/*.test.js",
+    "demo:reset": "node -e \"require('fs').rmSync('data',{recursive:true,force:true})\"",
+    "bedrock:models": "node --env-file-if-exists=.env scripts/bedrock-models.js"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1156.0",
+    "@aws-sdk/client-polly": "^3.1156.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "express": "^5.3.0",
+    "zod": "^4.6.7"
+  },
+  "engines": {
+    "node": ">=22.9"
+  },
+  "author": "Kshitijvv1211",
+  "keywords": [
+    "mcp",
+    "alexa",
+    "model-context-protocol",
+    "bedrock",
+    "agent-safety"
+  ]
+}
