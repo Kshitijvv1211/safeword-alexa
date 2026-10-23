@@ -101,6 +101,8 @@ function onElicit(params) {
       ? 'Demo safe word: Biscuit. A cloned voice would not know it.'
       : 'Demo passcodes: Sam 4321, Alex 2468.';
     dlg.showModal();
+    // Speak the question as the form opens, so Alexa doesn't go quiet while waiting for approval.
+    speak(isSafeWord ? `${params.message} ${props.answer.title ?? ''}` : params.message);
     setTimeout(() => $('elicit-fields').querySelector('input')?.focus(), 50);
     dlg.addEventListener('close', function done() {
       dlg.removeEventListener('close', done);
@@ -159,19 +161,63 @@ async function plan(text) {
     return { tool: 'freshcart__place_order', args: { items: usual.items } };
   }
   const qty = (word) => +(word && (WORDNUM[word] ?? word)) || 1;
+  const door = (s) => DOORS[(s.match(/\b(front|back|garage)\b/) ?? [])[1] ?? 'front'];
+
+  // Safety: "someone is at my door at 2am", "I think there's an intruder", "I'm scared".
+  if (/\b(stranger|intruder|someone|somebody|man|woman|person|people|guy)\b.*\b(door|outside|window|yard|porch|house|knocking|banging|breaking)\b|\b(intruder|break(ing)?[- ]in|burglar|i'?m scared|feel unsafe|help me|suspicious)\b/.test(t)
+    && !/\b(unlock|open)\b/.test(t)) {
+    return { routine: 'secure_home' };
+  }
+
+  // Doors: "unlock the door", "open the garage", "lock up", "is the door locked?"
+  if (/\b(is|are)\b.*\block(ed)?\b|\block status\b|\bstatus of\b.*\b(lock|door)/.test(t)) return { tool: 'lockwise__get_lock_status', args: {} };
+  if (/\b(unlock|open)\b/.test(t) && /\b(door|front|back|garage|house|home)\b/.test(t)) return { tool: 'lockwise__unlock_door', args: { door: door(t) } };
+  if (/\block\b/.test(t) && /\b(door|front|back|garage|up|house|home)\b/.test(t)) return { tool: 'lockwise__lock_door', args: { door: door(t) } };
+
+  // Money: "send $900 to Mark Davis", "pay Sam 20", "transfer 50 dollars to the plumber", "give Jake $100"
+  if (/\b(send|pay|transfer|give|wire)\b/.test(t) && (m = t.match(/\$?\s?(\d+(?:\.\d+)?)/))) {
+    const amount = +m[1];
+    const STOP = /\b(now|please|right|today|tonight|it'?s|its|he|she|they|for|because|asap|urgent|urgently|quick|quickly|immediately|and|from|using|via|with|dollars?|bucks|\$?\d+)\b.*$/i;
+    let who = (text.match(/\bto\s+(?:the\s+)?([a-z][\w'.-]*(?:\s+[a-z][\w'.-]*){0,2})/i) ?? [])[1]
+      ?? (text.match(/\b(?:pay|give)\s+(?!\$|\d)([a-z][\w'.-]*(?:\s+[a-z][\w'.-]*)?)/i) ?? [])[1];
+    who = who?.replace(STOP, '').trim();
+    if (who) {
+      const title = who.split(/\s+/).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+      // "Sam" -> "Sam Rivera" when the wallet already knows that person.
+      const saved = (await mcp.callTool('quickpay__list_payees', {}, 'ui')).payees;
+      const payee = saved.find((p) => p.toLowerCase() === title.toLowerCase())
+        ?? saved.find((p) => p.toLowerCase().split(' ')[0] === title.toLowerCase())
+        ?? title;
+      return { tool: 'quickpay__send_money', args: { amount, payee } };
+    }
+  }
+  if (/\b(balance|how much (money )?(do i have|is in))\b/.test(t)) return { tool: 'quickpay__get_balance', args: {} };
+
+  // Shopping: known items first, then any product the store sells.
   if ((m = t.match(/(\w+)?\s*game pass/))) return { tool: 'freshcart__place_order', args: { items: [{ sku: 'game-pass', qty: qty(m[1]) }] } };
   if (/monitor/.test(t)) return { tool: 'freshcart__place_order', args: { items: [{ sku: 'monitor-27-4k', qty: 1 }] } };
-  if (/gift card/.test(t) && !/send/.test(t)) return { tool: 'freshcart__place_order', args: { items: [{ sku: 'gift-card-100', qty: 1 }] } };
-  if ((m = t.match(/(\w+)?\s*(?:packs? of )?paper towels/))) return { tool: 'freshcart__place_order', args: { items: [{ sku: 'paper-towels', qty: qty(m[1]) }] } };
-  if ((m = t.match(/\bunlock (?:the )?(front|back|garage)/))) return { tool: 'lockwise__unlock_door', args: { door: DOORS[m[1]] } };
-  if ((m = t.match(/\block (?:the )?(front|back|garage)/))) return { tool: 'lockwise__lock_door', args: { door: DOORS[m[1]] } };
-  if (/locks?|locked/.test(t)) return { tool: 'lockwise__get_lock_status', args: {} };
-  if ((m = text.match(/[Ss]end \$?(\d+(?:\.\d+)?)\s*(?:dollars )?to ([A-Z][\w'-]*(?: [A-Z][\w'-]*)*)/))) {
-    return { tool: 'quickpay__send_money', args: { amount: +m[1], payee: m[2].trim() } };
+  if (/gift ?card/.test(t)) return { tool: 'freshcart__place_order', args: { items: [{ sku: 'gift-card-100', qty: 1 }] } };
+  if ((m = t.match(/(\w+)?\s*(?:packs? of |rolls? of )?paper towels?/))) return { tool: 'freshcart__place_order', args: { items: [{ sku: 'paper-towels', qty: qty(m[1]) }] } };
+  if (/\b(buy|order|get|purchase|add|need|want|book)\b/.test(t)) {
+    const from = (t.match(/\bfrom\s+([a-z'’\s]+?)(?:\s+for\b|[.,!?]|$)/) ?? [])[1]?.replace(/[’']/g, '').trim();
+    const words = t.replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/)
+      .filter((w) => w.length > 2 && !/^(buy|order|get|purchase|add|need|want|some|the|and|for|please|alexa|can|you|me|more|of|to|my|from|with|new|one|two|three|four|five|six|ten|pack|packs|bag|bags|box|boxes|bottle|bottles|kids|children|family|tonight|today|now|dinner|lunch|breakfast|quick|quickly)$/.test(w));
+    for (const w of words.sort((a, b) => b.length - a.length)) {
+      const { results } = await mcp.callTool('freshcart__search_products', { query: w.replace(/(es|s)$/, '') }, 'ui');
+      if (results?.length) {
+        // Prefer the shop the person named ("from Pizza Palace").
+        const pick = (from && results.find((r) => r.seller.toLowerCase().replace(/['’]/g, '').includes(from))) || results[0];
+        const n = qty((t.match(/\b(\d+|a|one|two|three|four|five|six|ten)\b/) ?? [])[1]);
+        return { tool: 'freshcart__place_order', args: { items: [{ sku: pick.sku, qty: n }] } };
+      }
+    }
+    return { notFound: words.join(' ') || text };
   }
-  if (/balance/.test(t)) return { tool: 'quickpay__get_balance', args: {} };
+  if (/\b(rules?|limits?|policy)\b/.test(t)) return { tool: 'get_policy', args: {}, gateOnly: true };
   return null;
 }
+
+const HELP = 'I can order things (try “order eggs” or “buy 2 coffee”), pay people (“pay Sam 20”, “send $900 to Mark Davis”), open or lock doors (“unlock the back door”), check your balance or locks, find deals, or change rules (“new rule: lower the limit to $20”). Or tap a scenario below.';
 
 // ---------- chat ----------
 function bubble(who, html, cls = '') {
@@ -192,14 +238,60 @@ function speakerName() {
   return $('speaker').selectedOptions[0].textContent.split(' (')[0];
 }
 
+// "It's 2:00 AM…" / "at 11pm" → use that as the household's local time.
+function timeFrom(text) {
+  const m = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?![a-z])/i);
+  if (!m) return null;
+  let h = Number(m[1]) % 12;
+  if (/p/i.test(m[3])) h += 12;
+  return `${String(h).padStart(2, '0')}:${m[2] ?? '00'}`;
+}
+
+/** Safety routine: check every lock, lock what's open, alert the guardian, never unlock. */
+async function secureHome(text) {
+  $('decision-tool').textContent = 'safety routine';
+  const { doors } = await mcp.callTool('lockwise__get_lock_status', {});
+  const open = Object.entries(doors).filter(([, s]) => s !== 'locked').map(([d]) => d);
+  for (const d of open) await mcp.callTool('lockwise__lock_door', { door: d, alexa_context: context(text) });
+  const alert = await mcp.callTool('alert_guardian', { message: `Possible stranger or safety concern: "${text}". Doors checked${open.length ? `, ${open.map((d) => d.replace('_', ' ')).join(' and ')} locked` : ', all were already locked'}.`, alexa_context: context(text) });
+  const say = `I'm here. ${open.length ? `I've locked the ${open.map((d) => d.replace('_', ' ')).join(' and ')}, and every door is now locked` : 'Every door is already locked'}. I've alerted ${alert.notified} on their phone. I won't unlock any door for a voice I don't recognise. If you feel unsafe, call 911.`;
+  bubble('alexa', esc(say), 'hold');
+  speak(say);
+  renderDecision({
+    verdict: 'secured',
+    reasons: [
+      `checked all locks: ${Object.entries(doors).map(([d, s]) => `${d.replace('_', ' ')} ${s}`).join(', ')}`,
+      open.length ? `locked: ${open.map((d) => d.replace('_', ' ')).join(', ')} (locking is always allowed)` : 'nothing needed locking',
+      `guardian alerted: ${alert.notified}`,
+      'unlock requests from unrecognised voices stay blocked while nobody is home or at night',
+    ],
+  });
+  $('app-view').hidden = true;
+}
+
 async function handle(text) {
   if (!text.trim()) return;
+  const spoken = timeFrom(text);
+  if (spoken) {
+    $('time').value = spoken;
+    $('clock-display').textContent = spoken;
+  }
   bubble('user', `<span class="who">${esc(speakerName())}</span>${esc(text)}`);
   thinking(true);
   try {
     const step = await plan(text);
+    if (step?.routine === 'secure_home') {
+      await secureHome(text);
+      return;
+    }
+    if (step?.notFound) {
+      bubble('alexa', `I couldn't find “${esc(step.notFound)}” in the connected stores. Try groceries, pizza, diapers, batteries, headphones, flowers, dog food or a laptop.`);
+      speak("Sorry, I couldn't find that in the connected stores.");
+      return;
+    }
     if (!step) {
-      bubble('alexa', "Sorry, this simulator only knows the demo phrases. Try one of the scenarios below.");
+      bubble('alexa', HELP);
+      speak("I didn't catch that. I can order things, pay people, open or lock doors, check your balance, or change house rules.");
       return;
     }
     $('decision-tool').textContent = step.tool;
@@ -241,6 +333,11 @@ function renderOutcome(step, out, meta = {}) {
     const lines = out.changes.map((c) => `${esc(c.action)}: ${c.before} → ${c.after}`).join('<br>');
     bubble('alexa', `I replayed your last ${out.replayed} decisions. ${out.changed ? `${out.changed} would change:<br><small>${lines}</small>` : 'None would change.'}`);
     renderDecision({ verdict: 'dry-run', reasons: [`${out.replayed} decisions replayed`, `${out.changed} would flip`] });
+    return;
+  }
+  if (step.tool === 'get_policy') {
+    bubble('alexa', `Your house rules: purchases up to ${money(out.purchases.auto_approve_limit)} go through on their own; ${out.purchases.blocked_categories.map((c) => c.replace('_', ' ')).join(', ')} are blocked; quiet hours are ${out.quiet_hours.start} to ${out.quiet_hours.end}; children ${out.purchases.children_can_purchase ? 'can' : "can't"} buy. The full list is in the House rules tab.`);
+    renderDecision({ verdict: 'passthrough', reasons: ['read the household policy'] });
     return;
   }
   if (step.tool === 'update_policy') {
@@ -451,29 +548,44 @@ function setVoiceLabel(text) {
 function initMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { $('mic').hidden = true; return; }
+  // Keep listening through short pauses; send only after ~2 s of silence or a second tap on the mic.
+  const SILENCE_MS = 2000;
   let rec = null;
+  let silence = null;
   $('mic').addEventListener('click', () => {
     if (rec) { rec.stop(); return; }
+    // Stop Alexa talking so the mic doesn't hear her (or cut you off).
+    playing?.pause();
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
     rec = new SR();
     rec.lang = 'en-US';
+    rec.continuous = true;
     rec.interimResults = true;
-    let finalText = '';
+    let heard = '';
+    const armSilence = () => {
+      clearTimeout(silence);
+      silence = setTimeout(() => rec?.stop(), SILENCE_MS);
+    };
     rec.onresult = (e) => {
-      const text = [...e.results].map((r) => r[0].transcript).join('');
-      $('utterance').value = text;
-      if (e.results[e.results.length - 1].isFinal) finalText = text;
+      heard = [...e.results].map((r) => r[0].transcript).join(' ').replace(/\s+/g, ' ').trim();
+      $('utterance').value = heard;
+      armSilence();
     };
     rec.onend = () => {
+      clearTimeout(silence);
       rec = null;
       $('mic').classList.remove('on');
+      $('mic').setAttribute('aria-label', 'Speak to Alexa');
       $('ring').classList.remove('listening');
-      if (finalText) handle(finalText);
+      if (heard) handle(heard);
     };
     rec.onerror = () => {};
     $('mic').classList.add('on');
+    $('mic').setAttribute('aria-label', 'Stop listening and send');
     $('ring').classList.add('listening');
-    speechSynthesis?.cancel();
     rec.start();
+    // If nothing is said at all, give up after a while instead of listening forever.
+    silence = setTimeout(() => rec?.stop(), 8000);
   });
 }
 

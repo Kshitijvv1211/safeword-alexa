@@ -72,6 +72,12 @@ const GATE_TOOLS = {
     input: z.object({ question: z.string().min(5).max(200), answer: z.string().min(2).max(100), min_transfer: z.number().nonnegative().optional(), approver: z.string().optional(), passcode: z.string().optional() }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   },
+  alert_guardian: {
+    title: 'Alert the guardian',
+    description: "Send an urgent alert to the household guardian's phone (for example: a stranger at the door, a fall, a suspicious call). Logged in the audit chain.",
+    input: z.object({ message: z.string().min(3).max(300), alexa_context: ContextSchema.optional() }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  },
   get_policy: {
     title: 'Read house rules',
     description: 'Return the household policy: limits, blocked categories, quiet hours, members and roles.',
@@ -299,6 +305,12 @@ export function buildMcpServer(gate, gateway) {
           }
           const r = gate.updatePolicy(a.changes, approver, passcode);
           return reply(r, !r.ok);
+        }
+        case 'alert_guardian': {
+          const g = gate.policy.transfers.caregiver;
+          const who = a.alexa_context?.speaker?.id ?? a.alexa_context?.speaker?.role ?? 'someone at home';
+          gate.notify(g, `Urgent from ${who}${a.alexa_context?.local_time ? ` at ${a.alexa_context.local_time}` : ''}: ${a.message}`, 'alert');
+          return reply({ ok: true, notified: gate.policy.members[g]?.name ?? g });
         }
         case 'evaluate_checkout': {
           const r = await gate.checkout.evaluate(a, a.alexa_context);

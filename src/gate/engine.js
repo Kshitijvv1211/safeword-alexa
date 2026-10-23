@@ -221,16 +221,10 @@ function sayWhat(action, cur) {
 }
 
 function sayLine(verdict, action, reasons, policy, cur) {
-  const what = action.type === 'unlock'
-    ? `unlock the ${action.door ?? 'door'}`
-    : action.type === 'transfer'
-      ? `send ${money(action.amount ?? 0, cur)}${action.payee ? ` to ${action.payee}` : ''}`
-      : action.type === 'purchase'
-        ? `order ${action.item ?? 'that'}${action.amount ? ` for ${money(action.amount, cur)}` : ''}`
-        : `do that`;
+  const what = action.type === 'secure' ? `lock the ${(action.door ?? 'door').replace('_', ' ')}` : sayWhat(action, cur);
   const why = reasons[0] ? `, because ${reasons[0]}` : '';
   switch (verdict) {
-    case 'allow': return `Done. I went ahead and ${what.replace(/^order/, 'ordered').replace(/^send/, 'sent').replace(/^unlock/, 'unlocked')}.`;
+    case 'allow': return what === 'do that' ? 'Done.' : `Done. I went ahead and ${what.replace(/^order/, 'ordered').replace(/^send/, 'sent').replace(/^unlock/, 'unlocked').replace(/^lock/, 'locked')}.`;
     case 'confirm': return `I can ${what}, but I need an adult to approve it first${why}.`;
     case 'hold': {
       const caregiver = policy.members[policy.transfers.caregiver]?.name ?? 'your caregiver';
